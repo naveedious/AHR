@@ -1,0 +1,59 @@
+---
+# Deploy Docker stacks via Portainer API
+# Compose files live inside Portainer's data volume, not on the filesystem.
+# We use the Portainer API to redeploy stacks after a fresh install.
+
+- name: Wait for Portainer to be ready
+  uri:
+    url: "http://localhost:{{ portainer_https_port }}/api/status"
+    method: GET
+    validate_certs: false
+    status_code: 200
+  register: portainer_status
+  until: portainer_status.status == 200
+  retries: 30
+  delay: 5
+  ignore_errors: true
+
+- name: Get Portainer API token
+  uri:
+    url: "http://localhost:{{ portainer_https_port }}/api/auth"
+    method: POST
+    body_format: json
+    body:
+      username: "{{ portainer_user | default('admin') }}"
+      password: "{{ portainer_password }}"
+    validate_certs: false
+    status_code: 200
+  register: portainer_auth
+  ignore_errors: true
+
+- name: Deploy stacks from Portainer
+  block:
+    - name: Get existing stacks from Portainer
+      uri:
+        url: "http://localhost:{{ portainer_https_port }}/api/stacks"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+        validate_certs: false
+        status_code: 200
+      register: stacks_list
+      ignore_errors: true
+
+    - name: Start each stack
+      uri:
+        url: "http://localhost:{{ portainer_https_port }}/api/stacks/{{ item.id }}/start"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+        validate_certs: false
+        status_code: [200, 204]
+      loop: "{{ stacks_list.json }}"
+      ignore_errors: true
+
+    - name: Report stack status
+      debug:
+        msg: "Started {{ stacks_list.json | length }} stacks via Portainer"
+      when: stacks_list.json is defined
+  when: portainer_auth.json.jwt is defined

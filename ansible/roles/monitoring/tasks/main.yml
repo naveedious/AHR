@@ -1,0 +1,152 @@
+---
+# Install Prometheus, Grafana, and Node Exporter as host services (not containers)
+# These run directly on the bare metal, managed via systemd
+
+# --- Prometheus ---
+
+- name: Create Prometheus user
+  user:
+    name: prometheus
+    system: true
+    shell: /bin/false
+    home: "{{ prometheus_data }}"
+    create_home: false
+
+- name: Create Prometheus directories
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+  loop:
+    - "{{ prometheus_data }}"
+    - "{{ prometheus_config }}"
+    - "{{ prometheus_config }}/consoles"
+    - "{{ prometheus_config }}/console_libraries"
+
+- name: Download Prometheus binary
+  get_url:
+    url: "https://github.com/prometheus/prometheus/releases/download/v2.53.0/prometheus-2.53.0.linux-amd64.tar.gz"
+    dest: /tmp/prometheus.tar.gz
+    mode: "0644"
+
+- name: Extract Prometheus
+  unarchive:
+    src: /tmp/prometheus.tar.gz
+    dest: /usr/local/bin/
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+
+- name: Verify Prometheus installation
+  command: prometheus --version
+  register: prometheus_version_output
+  changed_when: false
+
+- name: Display Prometheus version
+  debug:
+    msg: "Prometheus installed: {{ prometheus_version_output.stdout }}"
+
+- name: Deploy Prometheus config
+  template:
+    src: prometheus.yml.j2
+    dest: "{{ prometheus_config }}/prometheus.yml"
+    owner: prometheus
+    group: prometheus
+    mode: "0644"
+  notify: restart prometheus
+
+- name: Install Prometheus systemd service
+  template:
+    src: prometheus.service.j2
+    dest: /etc/systemd/system/prometheus.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart prometheus
+
+# --- Grafana ---
+
+- name: Add Grafana GPG key
+  apt_key:
+    url: https://apt.grafana.com/gpg.key
+    keyring: /usr/share/keyrings/grafana.gpg
+    state: present
+
+- name: Add Grafana repository
+  apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    state: present
+    filename: grafana
+
+- name: Install Grafana
+  apt:
+    name: grafana
+    state: present
+    update_cache: true
+
+- name: Ensure Grafana directories exist
+  file:
+    path: "{{ item }}"
+    state: directory
+    owner: grafana
+    group: grafana
+    mode: "0755"
+  loop:
+    - "{{ grafana_data }}"
+    - "{{ grafana_config }}"
+    - /etc/default/grafana-server
+
+- name: Deploy Grafana config
+  template:
+    src: grafana.ini.j2
+    dest: "{{ grafana_config }}/grafana.ini"
+    owner: grafana
+    group: grafana
+    mode: "0644"
+  notify: restart grafana
+
+# --- Node Exporter ---
+
+- name: Create Node Exporter user
+  user:
+    name: node_exporter
+    system: true
+    shell: /bin/false
+    create_home: false
+
+- name: Download Node Exporter
+  get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v1.8.1/node_exporter-1.8.1.linux-amd64.tar.gz"
+    dest: /tmp/node_exporter.tar.gz
+    mode: "0644"
+
+- name: Extract Node Exporter
+  unarchive:
+    src: /tmp/node_exporter.tar.gz
+    dest: /usr/local/bin/
+    remote_src: true
+    extra_opts: ["--strip-components=1"]
+
+- name: Install Node Exporter systemd service
+  template:
+    src: node_exporter.service.j2
+    dest: /etc/systemd/system/node_exporter.service
+    mode: "0644"
+  notify:
+    - reload systemd
+    - restart node_exporter
+
+# --- Enable services ---
+
+- name: Enable and start monitoring services
+  systemd:
+    name: "{{ item }}"
+    state: started
+    enabled: true
+    daemon_reload: true
+  loop:
+    - prometheus
+    - grafana-server
+    - node_exporter
+  ignore_errors: true

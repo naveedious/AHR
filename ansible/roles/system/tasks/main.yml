@@ -1,0 +1,80 @@
+---
+# System baseline configuration
+
+- name: Set hostname
+  hostname:
+    name: "nav-ubnt01"
+
+- name: Set timezone
+  timezone:
+    name: "Pacific/Auckland"
+
+- name: Configure static IP
+  template:
+    src: netplan-static.yml.j2
+    dest: /etc/netplan/01-static.yml
+    mode: "0600"
+  notify: apply netplan
+
+- name: Install baseline packages
+  apt:
+    name:
+      - vim
+      - htop
+      - iotop
+      - net-tools
+      - dnsutils
+      - unzip
+      - jq
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      - apt-transport-https
+      - software-properties-common
+      - python3-docker
+      - python3-jsondiff
+      - cifs-utils
+      - tmux
+      - curl
+      - wget
+      - smartmontools
+    state: present
+
+- name: Disable swap
+  command: swapoff -a
+  changed_when: true
+
+- name: Remove swap from fstab
+  lineinfile:
+    path: /etc/fstab
+    regexp: '^\s*[^#].*swap'
+    state: absent
+
+- name: Set kernel sysctl for containers
+  sysctl:
+    name: "{{ item.key }}"
+    value: "{{ item.value }}"
+    sysctl_file: /etc/sysctl.d/99-ahr.conf
+    reload: true
+  loop:
+    - { key: "net.ipv4.ip_forward", value: "1" }
+    - { key: "net.bridge.bridge-nf-call-iptables", value: "1" }
+    - { key: "net.bridge.bridge-nf-call-ip6tables", value: "1" }
+    - { key: "vm.overcommit_memory", value: "1" }
+    - { key: "fs.inotify.max_user_watches", value: "524288" }
+
+- name: Restore fstab from backup (if available)
+  block:
+    - name: Check if backup fstab exists in Kopia
+      stat:
+        path: "{{ kopia_config_dir }}/../fstab.backup"
+      register: fstab_backup
+      ignore_errors: true
+
+    - name: Restore CIFS mounts from template
+      template:
+        src: fstab-cifs.j2
+        dest: /etc/fstab
+        mode: "0644"
+      notify: mount all
+      ignore_errors: true

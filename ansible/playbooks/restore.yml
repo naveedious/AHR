@@ -1,0 +1,123 @@
+---
+# AHR Main Restore Playbook
+# Restores a fresh Ubuntu host to full homelab state
+
+- name: Automated Host Restore
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    target_ip: "10.1.1.101"
+    gateway: "10.1.1.1"
+    dns_servers:
+      - "1.1.1.1"
+      - "8.8.8.8"
+    docker_compose_version: "v2.24.0"
+    docker_data_root: "/containers/docker/docker-data"
+    portainer_version: "2.39.3"
+    portainer_data: "/containers/portainer"
+    portainer_http_port: "8000"
+    portainer_https_port: "9443"
+    kopia_container_name: "Kopia"
+    kopia_config_dir: "/containers/kopia/config"
+    kopia_cache_dir: "/containers/kopia/cache"
+    kopia_logs_dir: "/containers/kopia/logs"
+    stacks_dir: "/opt/stacks"
+    stacks:
+      - name: "bookstack"
+        port: "6875"
+      - name: "npm"
+        port: "81"
+      - name: "authentik"
+        port: "9000"
+      - name: "homebox"
+        port: "3100"
+      - name: "hermes"
+        port: "3000"
+    prometheus_port: "9090"
+    grafana_port: "3000"
+    prometheus_data: "/var/lib/prometheus"
+    prometheus_config: "/etc/prometheus"
+    grafana_data: "/var/lib/grafana"
+    grafana_config: "/etc/grafana"
+    beeper_dir: "/beeper"
+    beeper_bridges:
+      - { session: "BeeperTelegram", cmd: "sh-matrix-telegram" }
+      - { session: "BeeperWhatsApp", cmd: "sh-matrix-whatsapp" }
+      - { session: "BeeperSignal", cmd: "sh-matrix-signal" }
+      - { session: "BeeperDiscord", cmd: "sh-matrix-discord" }
+      - { session: "BeeperGoogleChat", cmd: "sh-matrix-googlechat" }
+      - { session: "Beepergmessages", cmd: "sh-matrix-gmessages" }
+      - { session: "BeeperMeta", cmd: "--param meta_platform=facebook sh-matrix-meta" }
+    cronicle_dir: "/opt/cronicle"
+    kopia_repo_type: "sftp"
+    kopia_repo_host: "pdx1-shared-a1-43.dreamhost.com"
+    kopia_repo_port: "22"
+    kopia_repo_path: "/home/nav_contaniner/Containers"
+    kopia_repo_username: "nav_contaniner"
+    kopia_repo_password: ""
+    kopia_server_user: "nkadmin"
+    kopia_server_pass: ""
+
+  pre_tasks:
+    - name: Wait for apt lock to be released
+      shell: while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
+      changed_when: false
+    - name: Update apt cache
+      apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+  roles:
+    - role: system
+      tags: [system]
+    - role: docker
+      tags: [docker]
+    - role: monitoring
+      tags: [monitoring]
+    - role: beeper
+      tags: [beeper]
+    - role: cronicle
+      tags: [cronicle]
+    - role: portainer
+      tags: [portainer]
+    - role: kopia
+      tags: [kopia]
+    - role: stacks
+      tags: [stacks]
+    - role: firewall
+      tags: [firewall]
+
+  post_tasks:
+    - name: Verify Docker is running
+      service:
+        name: docker
+        state: started
+        enabled: true
+    - name: Verify host services
+      service:
+        name: "{{ item }}"
+        state: started
+        enabled: true
+      loop:
+        - prometheus
+        - grafana-server
+        - node_exporter
+      ignore_errors: true
+    - name: Final summary
+      debug:
+        msg:
+          - "=== AHR Restore Complete ==="
+          - "Host: {{ target_ip }}"
+          - "Docker: installed"
+          - "Portainer: https://{{ target_ip }}:{{ portainer_https_port }}"
+          - "Grafana: http://{{ target_ip }}:{{ grafana_port }}"
+          - "Prometheus: http://{{ target_ip }}:{{ prometheus_port }}"
+          - "Beeper: 7 bridges (tmux sessions)"
+          - "Next steps:"
+          - "  1. Log in to Portainer and verify all stacks"
+          - "  2. Check Kopia backup status at http://{{ target_ip }}:51515"
+          - "  3. Verify DNS records point to {{ target_ip }}"
+          - "  4. Recreate SMB credential files (.smbcredentials, .plexsrv)"
+          - "  5. Verify Beeper bridges: tmux list-sessions"

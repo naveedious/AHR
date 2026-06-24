@@ -1,0 +1,23 @@
+---
+# Install Portainer CE
+
+- name: Create Portainer data directory
+  file:
+    path: "{{ portainer_data }}"
+    state: directory
+    mode: "0755"
+
+- name: Deploy Portainer CE
+  community.docker.docker_container:
+    name: portainer
+    image: "portainer/portainer-ce:{{ portainer_version }}"
+    state: started
+    restart_policy: always
+    ports:
+      - "{{ portainer_http_port }}:8000"
+      - "{{ portainer_https_port }}:9443"
+    volumes:
+      - "{{ portainer_data }}:/data"
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      ahr.managed: "true"

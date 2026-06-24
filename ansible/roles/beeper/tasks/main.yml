@@ -1,0 +1,46 @@
+---
+# Install Beeper bridges (bbctl + startup.sh)
+# Beeper runs directly on the host via tmux sessions, not in Docker
+
+- name: Create beeper directory
+  file:
+    path: "{{ beeper_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install bbctl binary
+  copy:
+    src: "bbctl"
+    dest: "{{ beeper_dir }}/bbctl"
+    mode: "0755"
+  ignore_errors: true
+  # In a real restore, this would come from Kopia backup or be downloaded
+  # bbctl is not publicly distributed — binary must be restored from backup
+
+- name: Deploy startup script
+  template:
+    src: startup.sh.j2
+    dest: "{{ beeper_dir }}/startup.sh"
+    mode: "0755"
+
+- name: Install beeper crontab entry
+  cron:
+    name: "beeper-startup"
+    special_time: reboot
+    job: "{{ beeper_dir }}/startup.sh"
+    user: root
+
+- name: Check if tmux is installed
+  apt:
+    name: tmux
+    state: present
+
+- name: Verify bbctl binary exists
+  stat:
+    path: "{{ beeper_dir }}/bbctl"
+  register: bbctl_stat
+
+- name: Warn if bbctl not found
+  debug:
+    msg: "WARNING: bbctl binary not found at {{ beeper_dir }}/bbctl — must restore from Kopia backup"
+  when: not bbctl_stat.stat.exists
