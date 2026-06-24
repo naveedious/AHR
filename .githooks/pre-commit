@@ -1,0 +1,4 @@
+#!/bin/bash
+if command -v gitleaks &> /dev/null; then
+    gitleaks protect --staged
+fi
