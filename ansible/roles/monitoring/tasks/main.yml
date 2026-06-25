@@ -1,6 +1,23 @@
 ---
 # Install Prometheus, Grafana, and Node Exporter as host services (not containers)
 # These run directly on the bare metal, managed via systemd
+#
+# Restore strategy:
+#   1. Install binaries and packages
+#   2. If kopia_restore_dir is set and exists, restore config + data over the defaults
+#   3. If no backup, deploy templates as fallback
+
+# --- Determine backup availability ---
+
+- name: Check if Kopia restore directory is configured and exists
+  stat:
+    path: "{{ kopia_restore_dir }}"
+  register: kopia_restore_stat
+  when: kopia_restore_dir != ""
+
+- name: Set backup availability fact
+  set_fact:
+    has_backup: "{{ kopia_restore_dir != '' and kopia_restore_stat.stat.exists | default(false) }}"
 
 # --- Prometheus ---
 
@@ -25,29 +42,63 @@
     - "{{ prometheus_config }}/consoles"
     - "{{ prometheus_config }}/console_libraries"
 
-- name: Download Prometheus binary
+- name: Download Prometheus archive
   get_url:
-    url: "https://github.com/prometheus/prometheus/releases/download/v2.53.0/prometheus-2.53.0.linux-amd64.tar.gz"
+    url: "https://github.com/prometheus/prometheus/releases/download/v{{ prometheus_version }}/prometheus-{{ prometheus_version }}.linux-amd64.tar.gz"
     dest: /tmp/prometheus.tar.gz
     mode: "0644"
 
-- name: Extract Prometheus
+- name: Extract Prometheus archive
   unarchive:
     src: /tmp/prometheus.tar.gz
-    dest: /usr/local/bin/
+    dest: /tmp/
     remote_src: true
-    extra_opts: ["--strip-components=1"]
 
-- name: Verify Prometheus installation
-  command: prometheus --version
-  register: prometheus_version_output
-  changed_when: false
+- name: Install Prometheus binary
+  copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/prometheus"
+    dest: /usr/local/bin/prometheus
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+    remote_src: true
 
-- name: Display Prometheus version
-  debug:
-    msg: "Prometheus installed: {{ prometheus_version_output.stdout }}"
+- name: Install promtool binary
+  copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/promtool"
+    dest: /usr/local/bin/promtool
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+    remote_src: true
 
-- name: Deploy Prometheus config
+- name: Install Prometheus console templates
+  copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/consoles/"
+    dest: "{{ prometheus_config }}/consoles/"
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+    remote_src: true
+
+- name: Install Prometheus console libraries
+  copy:
+    src: "/tmp/prometheus-{{ prometheus_version }}.linux-amd64/console_libraries/"
+    dest: "{{ prometheus_config }}/console_libraries/"
+    owner: prometheus
+    group: prometheus
+    mode: "0755"
+    remote_src: true
+
+- name: Restore Prometheus config from backup
+  synchronize:
+    src: "{{ kopia_restore_dir }}/etc/prometheus/"
+    dest: "{{ prometheus_config }}/"
+    rsync_opts:
+      - "--chown=prometheus:prometheus"
+  when: has_backup
+
+- name: Deploy default Prometheus config (no backup)
   template:
     src: prometheus.yml.j2
     dest: "{{ prometheus_config }}/prometheus.yml"
@@ -55,6 +106,15 @@
     group: prometheus
     mode: "0644"
   notify: restart prometheus
+  when: not has_backup
+
+- name: Restore Prometheus TSDB data from backup
+  synchronize:
+    src: "{{ kopia_restore_dir }}/var/lib/prometheus/"
+    dest: "{{ prometheus_data }}/"
+    rsync_opts:
+      - "--chown=prometheus:prometheus"
+  when: has_backup
 
 - name: Install Prometheus systemd service
   template:
@@ -79,7 +139,7 @@
     state: present
     filename: grafana
 
-- name: Install Grafana
+- name: Install Grafana via apt
   apt:
     name: grafana
     state: present
@@ -95,16 +155,48 @@
   loop:
     - "{{ grafana_data }}"
     - "{{ grafana_config }}"
-    - /etc/default/grafana-server
+    - "{{ grafana_data }}/dashboards"
+    - "{{ grafana_config }}/provisioning"
+    - "{{ grafana_config }}/provisioning/dashboards"
+    - "{{ grafana_config }}/provisioning/datasources"
 
-- name: Deploy Grafana config
+- name: Restore Grafana config from backup
+  synchronize:
+    src: "{{ kopia_restore_dir }}/etc/grafana/"
+    dest: "{{ grafana_config }}/"
+  when: has_backup
+
+- name: Set Grafana config ownership after restore
+  file:
+    path: "{{ grafana_config }}"
+    owner: root
+    group: grafana
+    recurse: true
+  when: has_backup
+
+- name: Deploy default Grafana config (no backup)
   template:
     src: grafana.ini.j2
     dest: "{{ grafana_config }}/grafana.ini"
+    owner: root
+    group: grafana
+    mode: "0640"
+  notify: restart grafana
+  when: not has_backup
+
+- name: Restore Grafana data from backup (DB, dashboards, plugins)
+  synchronize:
+    src: "{{ kopia_restore_dir }}/var/lib/grafana/"
+    dest: "{{ grafana_data }}/"
+  when: has_backup
+
+- name: Set Grafana data ownership after restore
+  file:
+    path: "{{ grafana_data }}"
     owner: grafana
     group: grafana
-    mode: "0644"
-  notify: restart grafana
+    recurse: true
+  when: has_backup
 
 # --- Node Exporter ---
 
@@ -115,18 +207,26 @@
     shell: /bin/false
     create_home: false
 
-- name: Download Node Exporter
+- name: Download Node Exporter archive
   get_url:
-    url: "https://github.com/prometheus/node_exporter/releases/download/v1.8.1/node_exporter-1.8.1.linux-amd64.tar.gz"
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-amd64.tar.gz"
     dest: /tmp/node_exporter.tar.gz
     mode: "0644"
 
-- name: Extract Node Exporter
+- name: Extract Node Exporter archive
   unarchive:
     src: /tmp/node_exporter.tar.gz
-    dest: /usr/local/bin/
+    dest: /tmp/
     remote_src: true
-    extra_opts: ["--strip-components=1"]
+
+- name: Install Node Exporter binary
+  copy:
+    src: "/tmp/node_exporter-{{ node_exporter_version }}.linux-amd64/node_exporter"
+    dest: /usr/local/bin/node_exporter
+    owner: node_exporter
+    group: node_exporter
+    mode: "0755"
+    remote_src: true
 
 - name: Install Node Exporter systemd service
   template:
