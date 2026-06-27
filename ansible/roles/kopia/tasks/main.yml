@@ -1,6 +1,12 @@
 ---
-# Kopia runs as a container (managed by Portainer), not installed on the host.
-# This role ensures the Kopia container is running and connected to its repository.
+# Kopia backup restore strategy:
+# 1. Ensure Kopia container is running (deployed by Portainer stack)
+# 2. Connect to SFTP repository if not already connected
+# 3. List available snapshots
+# 4. Restore the latest snapshot to a target directory
+#
+# SFTP credentials and restore behavior are driven by playbook vars
+# or prompted at runtime via bootstrap.sh (KOPIA_REPO_PASSWORD, KOPIA_SERVER_PASS)
 
 - name: Ensure Kopia directories exist
   file:
@@ -17,43 +23,98 @@
     name: "{{ kopia_container_name }}"
   register: kopia_container
 
-- name: Warn if Kopia container not found
-  debug:
+- name: Fail if Kopia container not found
+  fail:
     msg: |
-      WARNING: Kopia container '{{ kopia_container_name }}' not found.
-      It should be deployed via Portainer stack 'backup'.
-      Ensure Portainer is running and the backup stack is deployed first.
+      Kopia container '{{ kopia_container_name }}' not running.
+      Ensure Portainer is up and the 'backup' stack is deployed first.
+      Then re-run this playbook.
   when: not kopia_container.container.State.Running | default(false)
 
-- name: Check Kopia repository status
+- name: Check Kopia repository connection status
   command: docker exec {{ kopia_container_name }} kopia repository status
   register: kopia_status
   changed_when: false
   ignore_errors: true
   when: kopia_container.container.State.Running | default(false)
 
-- name: Display Kopia status
+- name: Connect to Kopia SFTP repository
+  command: >-
+    docker exec {{ kopia_container_name }} kopia repository connect sftp
+    --path={{ kopia_repo_path }}
+    --host={{ kopia_repo_host }}
+    --port={{ kopia_repo_port }}
+    --username={{ kopia_repo_username }}
+    --password={{ kopia_repo_password }}
+  no_log: true
+  when:
+    - kopia_container.container.State.Running | default(false)
+    - kopia_status.rc != 0
+  ignore_errors: true
+
+- name: Start Kopia server
+  command: >-
+    docker exec {{ kopia_container_name }} kopia server start
+    --insecure
+    --username={{ kopia_server_user }}
+    --password={{ kopia_server_pass }}
+  no_log: true
+  when: kopia_container.container.State.Running | default(false)
+  ignore_errors: true
+
+- name: Wait for Kopia server to be ready
+  pause:
+    seconds: 5
+  when: kopia_container.container.State.Running | default(false)
+
+- name: List Kopia snapshots
+  command: >-
+    docker exec {{ kopia_container_name }} kopia snapshot list
+    --json
+    --all-paths
+  register: kopia_snapshots
+  changed_when: false
+  ignore_errors: true
+  when: kopia_container.container.State.Running | default(false)
+
+- name: Parse latest snapshot
+  set_fact:
+    latest_snapshot: "{{ (kopia_snapshots.stdout | from_json | sort(attribute='startTime') | last) if (kopia_snapshots.rc == 0 and kopia_snapshots.stdout | from_json | length > 0) else none }}"
+
+- name: Display latest snapshot info
   debug:
-    msg: "Kopia repository: {{ kopia_status.stdout | default('unknown') }}"
-  when: kopia_status is defined and kopia_status.stdout is defined
+    msg: |
+      Latest Kopia snapshot:
+        Path: {{ latest_snapshot.path | default('N/A') }}
+        Time: {{ latest_snapshot.startTime | default('N/A') }}
+  when: latest_snapshot is not none
 
-- name: Connect to Kopia repository if needed
+- name: Restore latest snapshot
   block:
-    - name: Check if already connected
-      command: docker exec {{ kopia_container_name }} kopia repository status
-      register: kopia_check
-      changed_when: false
+    - name: Create restore target directory
+      file:
+        path: "{{ kopia_restore_dir }}"
+        state: directory
+        mode: "0755"
+      when: kopia_restore_dir != ""
+
+    - name: Restore latest snapshot to target directory
+      command: >-
+        docker exec {{ kopia_container_name }} kopia restore
+        {{ latest_snapshot.id }}
+        {{ kopia_restore_dir }}
+      when:
+        - latest_snapshot is not none
+        - kopia_restore_dir != ""
+      register: restore_result
       ignore_errors: true
 
-    - name: Connect to SFTP repository
-      command: >
-        docker exec {{ kopia_container_name }} kopia repository connect {{ kopia_repo_type }}
-        --path={{ kopia_repo_path }}
-        --host={{ kopia_repo_host }}
-        --port={{ kopia_repo_port }}
-        --username={{ kopia_repo_username }}
-        --password={{ kopia_repo_password }}
-      no_log: true
-      when: kopia_check.rc != 0
-      ignore_errors: true
+    - name: Report restore status
+      debug:
+        msg: "Snapshot restored to {{ kopia_restore_dir }} (exit code: {{ restore_result.rc | default('N/A') }})"
+      when: restore_result is defined and kopia_restore_dir != ""
+
+- name: Display Kopia web UI URL
+  debug:
+    msg: "Kopia UI available at https://{{ target_ip }}:51515"
   when: kopia_container.container.State.Running | default(false)

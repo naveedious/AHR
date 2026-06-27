@@ -52,7 +52,7 @@
       - { session: "BeeperSignal", cmd: "sh-matrix-signal" }
       - { session: "BeeperDiscord", cmd: "sh-matrix-discord" }
       - { session: "BeeperGoogleChat", cmd: "sh-matrix-googlechat" }
-      - { session: "Beepergmessages", cmd: "sh-matrix-gmessages" }
+      - { session: "BeeperGMessages", cmd: "sh-matrix-gmessages" }
       - { session: "BeeperMeta", cmd: "--param meta_platform=facebook sh-matrix-meta" }
     # Cronicle
     cronicle_dir: "/opt/cronicle"
@@ -62,14 +62,34 @@
     kopia_repo_port: "22"
     kopia_repo_path: "/home/nav_contaniner/Containers"
     kopia_repo_username: "nav_contaniner"
-    kopia_repo_password: ""
+    kopia_repo_password: "{{ lookup('env', 'KOPIA_REPO_PASSWORD') | default('', true) }}"
     kopia_server_user: "nkadmin"
-    kopia_server_pass: ""
-    # Kopia restore directory — set this to where backup data has been pre-restored
-    # Leave empty to use template-based defaults (no backup restore)
-    kopia_restore_dir: ""
+    kopia_server_pass: "{{ lookup('env', 'KOPIA_SERVER_PASS') | default('', true) }}"
+    # Kopia restore directory — set this to where backup data will be restored
+    # Leave empty to skip snapshot restore (fresh install only)
+    kopia_restore_dir: "{{ lookup('env', 'KOPIA_RESTORE_DIR') | default('', true) }}"
+
+  vars_prompt:
+    - name: kopia_repo_password_prompt
+      prompt: "Kopia SFTP repository password (or press Enter to use env KOPIA_REPO_PASSWORD)"
+      private: true
+      default: ""
+    - name: kopia_server_pass_prompt
+      prompt: "Kopia server UI password (or press Enter to use env KOPIA_SERVER_PASS)"
+      private: true
+      default: ""
+    - name: kopia_restore_dir_prompt
+      prompt: "Path to restore Kopia snapshot to (or press Enter for fresh install)"
+      private: false
+      default: ""
 
   pre_tasks:
+    - name: Merge prompted credentials with env vars
+      set_fact:
+        kopia_repo_password: "{{ kopia_repo_password_prompt if kopia_repo_password_prompt != '' else kopia_repo_password }}"
+        kopia_server_pass: "{{ kopia_server_pass_prompt if kopia_server_pass_prompt != '' else kopia_server_pass }}"
+        kopia_restore_dir: "{{ kopia_restore_dir_prompt if kopia_restore_dir_prompt != '' else kopia_restore_dir }}"
+
     - name: Wait for apt lock to be released
       shell: while fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do sleep 5; done
       changed_when: false

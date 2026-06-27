@@ -1,0 +1,4 @@
+# CIFS mounts restored by AHR
+{% for mount in cifs_mounts | default([] ) }}
+{{ mount.share }} {{ mount.mountpoint }} cifs credentials={{ mount.credentials }},iocharset=utf8,vers=3.0,_netdev,x-systemd.automount 0 0
+{% endfor %}

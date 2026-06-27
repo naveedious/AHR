@@ -1,0 +1,14 @@
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    {{ ansible_default_ipv4.interface | default('ens18') }}:
+      dhcp4: no
+      addresses:
+        - {{ target_ip }}/24
+      gateway4: {{ gateway }}
+      nameservers:
+        addresses:
+{% for dns in dns_servers %}
+          - {{ dns }}
+{% endfor %}

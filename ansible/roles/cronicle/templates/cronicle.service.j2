@@ -1,0 +1,16 @@
+[Unit]
+Description=Cronicle Task Scheduler
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory={{ cronicle_dir }}
+ExecStart={{ cronicle_dir }}/bin/cronicle
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+Environment=CRONICLE_HOME={{ cronicle_dir }}
+
+[Install]
+WantedBy=multi-user.target

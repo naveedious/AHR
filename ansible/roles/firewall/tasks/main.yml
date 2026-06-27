@@ -1,0 +1,59 @@
+---
+# UFW firewall baseline
+# SSH must always be allowed before enabling — locksafe
+
+- name: Install UFW
+  apt:
+    name: ufw
+    state: present
+
+- name: Allow SSH before enabling firewall
+  ufw:
+    rule: allow
+    port: "22"
+    proto: tcp
+
+- name: Allow homelab service ports
+  ufw:
+    rule: allow
+    port: "{{ item }}"
+    proto: tcp
+  loop:
+    - "80"      # HTTP / Let's Encrypt
+    - "443"     # HTTPS
+    - "8000"    # Portainer HTTP
+    - "9443"    # Portainer HTTPS
+    - "9090"    # Prometheus
+    - "3000"    # Grafana
+    - "9100"    # Node Exporter
+    - "51515"   # Kopia UI
+    - "6875"    # BookStack
+    - "9000"    # Authentik
+    - "81"      # Nginx Proxy Manager
+
+- name: Allow PVE/proxmox management (if applicable)
+  ufw:
+    rule: allow
+    port: "8006"
+    proto: tcp
+  ignore_errors: true
+
+- name: Enable UFW
+  ufw:
+    state: enabled
+    policy: default
+    direction: incoming
+
+- name: Allow all outbound
+  ufw:
+    rule: allow
+    direction: out
+
+- name: Show UFW status
+  command: ufw status verbose
+  register: ufw_status
+  changed_when: false
+
+- name: Display firewall rules
+  debug:
+    msg: "{{ ufw_status.stdout_lines }}"

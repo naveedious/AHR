@@ -1,0 +1,27 @@
+#!/bin/bash
+# AHR Beeper bridge startup script
+# Launches all 7 Matrix bridges in tmux sessions
+
+BEEPER_DIR="{{ beeper_dir }}"
+
+start_bridge() {
+    local session_name="$1"
+    local cmd="$2"
+    
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+        echo "Session $session_name already running, skipping"
+        return 0
+    fi
+    
+    tmux new-session -d -s "$session_name" "${BEEPER_DIR}/bbctl $cmd"
+    echo "Started bridge: $session_name"
+}
+
+echo "=== Starting Beeper bridges at $(date) ==="
+
+{% for bridge in beeper_bridges %}
+start_bridge "{{ bridge.session }}" "{{ bridge.cmd }}"
+{% endfor %}
+
+echo "=== All Beeper bridges launched ==="
+echo "Verify with: tmux list-sessions"

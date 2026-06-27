@@ -1,12 +1,19 @@
 [Unit]
 Description=Node Exporter
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=node_exporter
 Group=node_exporter
 Type=simple
-ExecStart=/usr/local/bin/node_exporter
+ExecStart=/usr/local/bin/node_exporter \
+  --collector.systemd \
+  --collector.processes \
+  --web.listen-address=:9100
+
+Restart=always
+RestartSec=5
 
 [Install]
-WantedBy=multi-user.target
+Wanted-by=multi-user.target
